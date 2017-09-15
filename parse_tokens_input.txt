@@ -1,0 +1,13 @@
+echo	 < redirect_in.txt	 > redirect_out.txt
+echo	adf adf < redirect_in.txt	 2> ERROR > redirect_out.txt
+echo	 > out  < in
+echo	 > out  < in &
+echo	 > out  < in 2> ERROR
+echo	 > out  < in 2> ERROR &
+
+echo < redirect_in.txt	 > redirect_out.txt 2> ERROR | asdf 2> ERROR echo < redirect_in.txt	 > redirect_out.txt &
+echo	 > out  < in | echo < redirect_in.txt	 > redirect_out.txt
+echo	 adf > out adf  < in | echo adsf adf adf < redirect_in.txt	 2> ERROR > redirect_out.txt
+echo	2> ERROR > out  < in | echo < redirect_in.txt	 > redirect_out.txt &
+echo	2> ERROR > out  < in | echo sweet nothings &
+something 2> ERROR hi | well then &
