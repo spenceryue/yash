@@ -40,6 +40,7 @@ typedef struct Job
 	int background;
 	JobState state;
 	Process* p;
+	int process_count;
 	struct Job* next;
 } Job;
 
@@ -188,6 +189,7 @@ Job* make_Job (char* input_str, char** tokens)
 	while (tokens != NULL && i < MAX_PIPE_MEMBERS);
 
 
+	j->process_count = i;
 	j->next = NULL;
 
 
@@ -261,6 +263,10 @@ int launch_Job (volatile Job* j)
 	pid_t pid;
 	int mypipe[2];
 
+	int N = 2*(j->process_count - 1);
+	int* opened = (int*) malloc(N*sizeof(int));
+
+
 	int i = 0;
 	Process* p = j->p;
 	fprintf(stderr, "<Parent> pid: %d, pgid: %d\n", getpid(), getpgid(0));
@@ -275,8 +281,8 @@ int launch_Job (volatile Job* j)
 				return -1;
 			}
 			printf("mypipe[0] = %d, mypipe[1] = %d\n", mypipe[0], mypipe[1]);
-			p->out = mypipe[1];
-			p->next->in = mypipe[0];
+			p->out = opened[2*i] = mypipe[1];
+			p->next->in = opened[2*i+1] = mypipe[0];
 		}
 
 		pid = fork();
@@ -301,15 +307,15 @@ int launch_Job (volatile Job* j)
 		printf("j->pgid: %d\n", j->pgid);
 		setpgid(pid, j->pgid);
 
-
-		if (p->next != NULL)
-			close(mypipe[1]);
-
 		p = p->next;
 		i++;
 	}
 	while (p != NULL);
-	close(mypipe[0]);
+
+	for (int k=0; k<N; k++)
+		close(opened[k]);
+
+	free(opened);
 
 	return 0;
 }

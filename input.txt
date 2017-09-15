@@ -1,3 +1,1 @@
-
-
-echo valid_arg < in > out 2> this and that | pipe_child yeah 2> < in > out invalid_args &
+cat fodder.txt | grep l > out.txt

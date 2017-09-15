@@ -56,6 +56,14 @@ int count_tokens(char** tokens)
 	return count;
 }
 
+int no_tokens(char** tokens)
+{
+	if (tokens == NULL)
+		return 1;
+
+	return tokens[0] == NULL;
+}
+
 void print_tokens(char** tokens)
 {
 	if (tokens == NULL)
