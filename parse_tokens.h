@@ -98,7 +98,7 @@ int main(int argc, char* argv[])
 
 	for (int i=0; read_line(stdin) != NULL; i++) {
 		printf("\n%d\n",i);
-		char** tokens = get_tokens(" \t");
+		char** tokens = set_tokens(" \t");
 		char** child_tokens = set_pipe_start(tokens);
 
 		printf("in: '%s'\n", get_redirect_in(tokens));

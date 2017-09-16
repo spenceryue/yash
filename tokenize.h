@@ -2,6 +2,7 @@
 #define TOKENIZE_H
 
 #include <stdio.h>			// FILE, printf
+#include <stdlib.h>			// malloc
 #include <string.h>			// strtok, strchr
 
 #define MAX_CHARS 2000
@@ -27,7 +28,7 @@ char* read_line (FILE* input_stream)
 	return response;
 }
 
-char** get_tokens (const char* delimiters)
+char** set_tokens (const char* delimiters)
 {
 	token_array[0] = strtok(input_buffer, delimiters);
 	if (token_array[0] == NULL)
@@ -64,6 +65,44 @@ int no_tokens(char** tokens)
 	return tokens[0] == NULL;
 }
 
+char* concat_tokens (char** tokens, const char* sep)
+{
+	if (tokens == NULL)
+		return NULL;
+
+	int N = count_tokens(tokens);
+	if (N <= 0)
+		return NULL;
+
+	size_t* length = (size_t*) malloc(N * sizeof(size_t));
+	size_t sep_len = strlen(sep);
+	size_t final_len = 0;
+
+	for (int i=0; i < N; i++)
+	{
+		length[i] = strlen(tokens[i]);
+		final_len += length[i] + sep_len;
+	}
+	final_len = final_len - sep_len + 1;
+
+	char* result = (char*) malloc(final_len * sizeof(char));
+
+	for (int i=0, j=0; i < N; i++)
+	{
+		strcpy(&result[j], tokens[i]);
+		j += length[i];
+		if (i < N-1)
+		{
+			strcpy(&result[j], sep);
+			j += sep_len;
+		}
+	}
+
+	free(length);
+
+	return result;
+}
+
 void print_tokens(char** tokens)
 {
 	if (tokens == NULL)
@@ -71,11 +110,9 @@ void print_tokens(char** tokens)
 
 	printf("Token count: %d\n", count_tokens(tokens));
 
-	int i;
-	for (i=0; tokens[i] != NULL; i++)
-		printf("Item #%d is '%s'\n", i, tokens[i]);
-
-	printf("Item #%d is '%s'\n", i, tokens[i]);
+	char* str = concat_tokens(tokens, "\", \"");
+	printf("tokens: [\"%s\"]\n", str ? str : "");
+	free(str);
 }
 
 #endif /* TOKENIZE_H */
@@ -104,7 +141,8 @@ int main(int argc, char* argv[])
 		exit(1);
 	}
 
-	char** tokens = get_tokens(" \t");
+	char** tokens = set_tokens(" \t");
+	print_tokens(tokens);
 	char** child_tokens = set_pipe_start(tokens);
 
 	printf("\n%d\n", 0);
@@ -125,7 +163,8 @@ int main(int argc, char* argv[])
 
 	for (int i=1; read_line(stdin) != NULL; i++) {
 		printf("\n%d\n", i);
-		tokens = get_tokens(" \t");
+		tokens = set_tokens(" \t");
+		print_tokens(tokens);
 		child_tokens = set_pipe_start(tokens);
 
 		get_redirect_in(tokens);

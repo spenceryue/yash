@@ -3,7 +3,7 @@
 #include <unistd.h>			// fork, pid_t, execlp
 #include <sys/wait.h>		// wait
 #include <signal.h>			// SIGINT, SIGTSTP, signal, SIG_ERR
-#include "tokenize.h"		// read_line, get_tokens, no_tokens
+#include "tokenize.h"		// read_line, set_tokens, no_tokens
 
 #include <errno.h>
 // extern int errno;
@@ -42,7 +42,7 @@ int main(void)
 		if (read_line(stdin) == NULL) // "^D" (EOF) entered
 			break;
 
-		char** tokens = get_tokens("\t ");
+		char** tokens = set_tokens("\t ");
 		if (no_tokens(tokens))
 			continue;
 

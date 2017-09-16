@@ -14,7 +14,7 @@
 // #define NDEBUG
 #include <assert.h>			// assert
 
-#define MAX_PIPE_MEMBERS 2
+#define MAX_PIPE_MEMBERS 100
 
 
 typedef struct Process
@@ -143,7 +143,7 @@ static Process* make_Process (char** tokens)
 }
 
 
-Job* make_Job (char* input_str, char** tokens)
+Job* make_Job (char* input_text, char** tokens)
 {
 	/* Allocate space for Job */
 	Job* j = (Job*) malloc(sizeof(Job));
@@ -156,7 +156,7 @@ Job* make_Job (char* input_str, char** tokens)
 
 	j->index = job_count++;
 	j->pgid = 0;
-	j->command = strdup(input_str);
+	j->command = input_text; // input_text now belongs to the Job
 	j->background = 0;
 	j->state = Running;
 
@@ -196,7 +196,7 @@ Job* make_Job (char* input_str, char** tokens)
 
 
 /* Called in forked child. */
-static void launch_Process (Process* p, pid_t pgid, char** tokens)
+static void launch_Process (Process* p, pid_t pgid, int background, char** tokens)
 {
 	/* Place in Process Group */
 	p->pid = getpid();
@@ -211,34 +211,26 @@ static void launch_Process (Process* p, pid_t pgid, char** tokens)
 	signal(SIGCHLD, SIG_DFL);
 
 
-	fprintf(stderr, "<%d> pid: %d, pgid: %d\n", pgid, getpid(), getpgid(0));
-	/* Init Pipes */
+	/* Init Pipes/Redirects */
 	if (p->in != -1)
 	{
-		fprintf(stderr,"> > > dup2(%d, STDIN_FILENO) < < < \n", p->in);
 		if (dup2(p->in, STDIN_FILENO) == -1)
-			perror("\tduping IN failed!");
+			perror("yash: redirect stdin");
 		close(p->in);
 	}
 	if (p->out != -1)
 	{
-		fprintf(stderr,"> > > dup2(%d, STDOUT_FILENO) < < < \n", p->out);
-		if (dup2(p->out, STDOUT_FILENO) == -1) {
-			perror("\tduping OUT failed!");
-		}
+		if (dup2(p->out, STDOUT_FILENO) == -1)
+			perror("yash: redirect stdout");
 		close(p->out);
 	}
 	if (p->err != -1)
 	{
-		fprintf(stderr,"> > > dup2(%d, STDERR_FILENO) < < < \n", p->err);
 		if (dup2(p->err, STDERR_FILENO) == -1)
-			perror("\tduping ERR failed!");
+			perror("yash: redirect stderr");
 		close(p->err);
 	}
-printf(">>>hi there...\n");
-		printf("pid: %d, pgid: %d\n", getpid(), getpgid(0));
-		print_tokens(tokens);
-printf("<<<<bye there...\n");
+
 
 	/* Execute Process */
 	execvp(tokens[0], tokens);
@@ -259,24 +251,27 @@ printf("<<<<bye there...\n");
 int launch_Job (volatile Job* j)
 {
 	pid_t pid;
-	int mypipe[2];
+	int mypipe[2], infile;
+
 
 	int i = 0;
 	Process* p = j->p;
-	fprintf(stderr, "<Parent> pid: %d, pgid: %d\n", getpid(), getpgid(0));
 	do
 	{
+		if (i > 0)
+			close(mypipe[1]); // close pipe out of previous process
+
 		if (p->next != NULL)
 		{
-			printf("hello %s\n", token_starts[i][0]);
+			if (i > 0)
+				infile = mypipe[0]; // save pipe in and close after launching process
 			if (pipe(mypipe) == -1)
 			{
 				perror("yash: pipe");
 				return -1;
 			}
-			printf("mypipe[0] = %d, mypipe[1] = %d\n", mypipe[0], mypipe[1]);
-			p->out = mypipe[1];
-			p->next->in = mypipe[0];
+			p->out = mypipe[1]; // hook up pipe out
+			p->next->in = mypipe[0]; // hook up next process's pipe in
 		}
 
 		pid = fork();
@@ -289,27 +284,24 @@ int launch_Job (volatile Job* j)
 		/* Child */
 		else if (pid == 0)
 		{
-			printf("---my pid is %d---\n",getpid());
 			if (p->next != NULL)
 				close(mypipe[0]);
-			launch_Process(p, j->pgid, token_starts[i]);
+			launch_Process(p, j->pgid, j->background, token_starts[i]);
 		}
 
 		/* Parent */
 		if (j->pgid == 0)
 			j->pgid = pid;
-		printf("j->pgid: %d\n", j->pgid);
-		setpgid(pid, j->pgid);
+		setpgid(pid, j->pgid); // Put child in the job process group
 
-
-		if (p->next != NULL)
-			close(mypipe[1]);
+		if (i > 0)
+			close(infile); // close pipe in of child
 
 		p = p->next;
 		i++;
 	}
 	while (p != NULL);
-	close(mypipe[0]);
+
 
 	return 0;
 }
@@ -328,17 +320,15 @@ int main(int argc, char* argv[])
 	if (argc == 1)
 		freopen("input.txt", "r", stdin);
 
-	char* input_str;
-	for (int i=0; (input_str = read_line(stdin)) != NULL; i++) {
-		printf("\n%d\n", i);
-		char** tokens = get_tokens(" \t");
+	char* input_text;
+	for (int i=0; (input_text = strdup(read_line(stdin))) != NULL; i++) {
+		char** tokens = set_tokens(" \t");
 
+		printf("%s\n", input_text);
 		if (no_tokens(tokens))
 			continue;
 
-		print_tokens(tokens);
-
-		first_job = make_Job(input_str, tokens);
+		first_job = make_Job(input_text, tokens); // input_text now belongs to the Job
 		launch_Job(first_job);
 		destroy_Job(first_job);
 		first_job = NULL;
