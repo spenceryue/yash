@@ -49,6 +49,24 @@ volatile static int job_count = 0;
 volatile static Job* first_job = NULL;
 
 
+void destroy_Process (Process* p)
+{
+	if (p == NULL)
+		return;
+
+	if (p->in != -1)
+		close(p->in); // might have already been closed (in launch_Job), but oh well
+
+	if (p->out != -1)
+		close(p->out); // might have already been closed (in launch_Job), but oh well
+
+	if (p->err != -1)
+		close(p->err);
+
+	free(p);
+}
+
+
 static void destroy_Job (volatile Job* j)
 {
 	if (j == NULL)
@@ -57,16 +75,19 @@ static void destroy_Job (volatile Job* j)
 	if (j->p != NULL)
 	{
 		Process* p = j->p;
-		for (Process* next = p->next;
-			 p != NULL;
-			 next = (next == NULL) ? NULL : next->next)
+		Process* next = p->next;
+		while (p != NULL)
 		{
-			free(p);
+			destroy_Process(p);
 			p = next;
+			if (next != NULL)
+				next = next->next;
 		}
 	}
 
 	free(j->command);
+
+	free((Job*) j);
 }
 
 
@@ -143,8 +164,11 @@ static Process* make_Process (char** tokens)
 }
 
 
-Job* make_Job (char* input_text, char** tokens)
+Job* make_Job (char** tokens)
 {
+	assert(tokens != NULL);
+
+
 	/* Allocate space for Job */
 	Job* j = (Job*) malloc(sizeof(Job));
 	if (j == NULL)
@@ -156,7 +180,7 @@ Job* make_Job (char* input_text, char** tokens)
 
 	j->index = job_count++;
 	j->pgid = 0;
-	j->command = input_text; // input_text now belongs to the Job
+	j->command = concat_tokens(tokens," ");
 	j->background = 0;
 	j->state = Running;
 
@@ -199,9 +223,9 @@ Job* make_Job (char* input_text, char** tokens)
 static void launch_Process (Process* p, pid_t pgid, int background, char** tokens)
 {
 	/* Place in Process Group */
-	p->pid = getpid();
+	pid_t pid = getpid();
 	if (pgid == 0)
-		pgid = p->pid;
+		pgid = pid;
 	setpgid(p->pid, pgid);
 
 
@@ -259,19 +283,19 @@ int launch_Job (volatile Job* j)
 	do
 	{
 		if (i > 0)
-			close(mypipe[1]); // close pipe out of previous process
-
+		{
+			close(mypipe[1]); // close pipe-out of previous process
+			infile = mypipe[0]; // save pipe-in and close after launching process
+		}
 		if (p->next != NULL)
 		{
-			if (i > 0)
-				infile = mypipe[0]; // save pipe in and close after launching process
 			if (pipe(mypipe) == -1)
 			{
 				perror("yash: pipe");
 				return -1;
 			}
-			p->out = mypipe[1]; // hook up pipe out
-			p->next->in = mypipe[0]; // hook up next process's pipe in
+			p->out = mypipe[1]; // hook up pipe-out
+			p->next->in = mypipe[0]; // hook up next process's pipe-in
 		}
 
 		pid = fork();
@@ -290,12 +314,13 @@ int launch_Job (volatile Job* j)
 		}
 
 		/* Parent */
+		p->pid = pid;
 		if (j->pgid == 0)
 			j->pgid = pid;
 		setpgid(pid, j->pgid); // Put child in the job process group
 
 		if (i > 0)
-			close(infile); // close pipe in of child
+			close(infile); // close pipe-in of child
 
 		p = p->next;
 		i++;
@@ -317,22 +342,32 @@ int launch_Job (volatile Job* j)
 
 int main(int argc, char* argv[])
 {
+	setvbuf(stdout, NULL, _IOLBF, BUFSIZ);
+
 	if (argc == 1)
 		freopen("input.txt", "r", stdin);
 
-	char* input_text;
-	for (int i=0; (input_text = strdup(read_line(stdin))) != NULL; i++) {
+	for (int i=0; read_line(stdin) != NULL; i++) {
 		char** tokens = set_tokens(" \t");
 
-		printf("%s\n", input_text);
+		print_tokens(tokens);
 		if (no_tokens(tokens))
 			continue;
 
-		first_job = make_Job(input_text, tokens); // input_text now belongs to the Job
+		first_job = make_Job(tokens);
 		launch_Job(first_job);
 		destroy_Job(first_job);
 		first_job = NULL;
 	}
+
+	/* Display for debug */
+	usleep(150000);
+	int f = open("out.txt",O_RDONLY);
+
+	char c[64];
+	ssize_t bytes = 0;
+	while ((bytes = read(f, c, 64)))
+		write(STDOUT_FILENO, c, bytes);
 }
 #endif
 /* Test JOB */
