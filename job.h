@@ -21,8 +21,9 @@ typedef struct Process
 {
 	pid_t pid;
 	int in, out, err;
+	int close_me[3];
 	int status;
-	struct Process* next;
+	volatile struct Process* next;
 } Process;
 
 typedef enum
@@ -39,31 +40,31 @@ typedef struct Job
 	char* command;
 	int background;
 	JobState state;
-	Process* p;
+	volatile Process* p;
 	struct Job* next;
 } Job;
 
 
 static char** token_starts[MAX_PIPE_MEMBERS] = {0};
-volatile static int job_count = 0;
+volatile static int job_count = 1;
 volatile static Job* first_job = NULL;
 
 
-void destroy_Process (Process* p)
+static void destroy_Process (volatile Process* p)
 {
 	if (p == NULL)
 		return;
 
-	if (p->in != -1)
-		close(p->in); // might have already been closed (in launch_Job), but oh well
+	if (p->in != -1 && p->close_me[0])
+		close(p->in);
 
-	if (p->out != -1)
-		close(p->out); // might have already been closed (in launch_Job), but oh well
+	if (p->out != -1 && p->close_me[1])
+		close(p->out);
 
-	if (p->err != -1)
+	if (p->err != -1 && p->close_me[2])
 		close(p->err);
 
-	free(p);
+	free((Process*) p);
 }
 
 
@@ -74,8 +75,8 @@ static void destroy_Job (volatile Job* j)
 
 	if (j->p != NULL)
 	{
-		Process* p = j->p;
-		Process* next = p->next;
+		volatile Process* p = j->p;
+		volatile Process* next = p->next;
 		while (p != NULL)
 		{
 			destroy_Process(p);
@@ -91,6 +92,33 @@ static void destroy_Job (volatile Job* j)
 }
 
 
+static int redirect_it (Process* p, char* path, int which)
+{
+	if (path == NULL)
+		return 0;
+
+	int success = -1;
+	if (which == 0)
+		success = p->in = open(path, O_RDONLY);
+	else if (which == 1)
+		success = p->out = creat(path, (S_IRUSR|S_IWUSR) | (S_IRGRP|S_IWGRP) | (S_IROTH|S_IWOTH));
+	else if (which == 2)
+		success = p->err = creat(path, (S_IRUSR|S_IWUSR) | (S_IRGRP|S_IWGRP) | (S_IROTH|S_IWOTH));
+
+	if (success == -1)
+	{
+		destroy_Process(p);
+		fprintf(stderr, "yash: ");
+		perror(path);
+		return -1;
+	}
+
+	p->close_me[which] = 1;
+
+	return 0;
+}
+
+
 static Process* make_Process (char** tokens)
 {
 	assert(tokens != NULL);
@@ -103,61 +131,47 @@ static Process* make_Process (char** tokens)
 		perror("yash: make_Process: malloc");
 		return NULL;
 	}
-	char* path;
 
 
-	/* Parse input redirect */
-	path = get_redirect_in(tokens);
-	if (path != NULL)
-	{
-		p->in = open(path, O_RDONLY);
-		if (p->in == -1)
-		{
-			free(p);
-			fprintf(stderr, "yash: ");
-			perror(path);
-			return NULL;
-		}
-	}
-	else
-		p->in = -1;
-
-
-	/* Parse out redirect */
-	path = get_redirect_out(tokens);
-	if (path != NULL)
-	{
-		p->out = creat(path, (S_IRUSR|S_IWUSR) | (S_IRGRP|S_IWGRP) | (S_IROTH|S_IWOTH));
-		if (p->out == -1)
-		{
-			free(p);
-			fprintf(stderr, "yash: ");
-			perror(path);
-			return NULL;
-		}
-	}
-	else
-		p->out = -1;
-
-
-	/* Parse error redirect */
-	path = get_redirect_error(tokens);
-	if (path != NULL)
-	{
-		p->err = open(path, O_RDONLY);
-		if (p->err == -1)
-		{
-			free(p);
-			fprintf(stderr, "yash: ");
-			perror(path);
-			return NULL;
-		}
-	}
-	else
-		p->err = -1;
-
-
+	/* Default initialization */
+	p->in = -1;
+	p->out = -1;
+	p->err = -1;
+	for (int i=0; i<3; i++)
+		p->close_me[i] = 0;
 	p->next = NULL;
+
+
+	/* Get redirect paths */
+	char* path[3];
+	enum {in, out, err};
+	path[in] = get_redirect_in(tokens);
+	path[out] = get_redirect_out(tokens);
+	path[err] = get_redirect_error(tokens);
+
+
+	/* Get order of redirects inputted */
+	int index[3] = {0,1,2};
+	for (int i=0; i<2; i++)
+	{
+		int least = i;
+		for (int j=i+1; j<3; j++)
+			if (path[index[j]] < path[index[least]])
+				least = j;
+
+		if (least == index[i])
+			continue;
+
+		int tmp = index[i];
+		index[i] = index[least];
+		index[least] = tmp;
+	}
+
+
+	/* Parse redirects (in received order) */
+	for (int i=0; i<3; i++)
+		if (redirect_it(p, path[index[i]], index[i]) == -1)
+			return NULL;
 
 
 	return p;
@@ -178,22 +192,30 @@ Job* make_Job (char** tokens)
 	}
 
 
+	/* Default initialization */
 	j->index = job_count++;
 	j->pgid = 0;
 	j->command = concat_tokens(tokens," ");
 	j->background = 0;
 	j->state = Running;
+	j->next = NULL;
 
 
+	/* Make processes */
 	int i = 0;
-	Process** p = &(j->p);
+	volatile Process* last;
 	do
 	{
 		char** next_tokens = set_pipe_start(tokens);
 		j->background |= has_ampersand(tokens);
 
-		*p = make_Process(tokens);
-		if (*p == NULL)
+		volatile Process* p;
+		if (i == 0)
+			p = j->p = make_Process(tokens);
+		else
+			p = last->next = make_Process(tokens);
+
+		if (p == NULL)
 		{
 			destroy_Job(j);
 			return NULL;
@@ -202,9 +224,7 @@ Job* make_Job (char** tokens)
 		/* Clip command args at first special symbol */
 		set_args_end(tokens);
 
-		Process** next = &((*p)->next);
-		p = next;
-
+		last = p;
 		token_starts[i] = tokens;
 		tokens = next_tokens;
 		i++;
@@ -212,23 +232,13 @@ Job* make_Job (char** tokens)
 	while (tokens != NULL && i < MAX_PIPE_MEMBERS);
 
 
-	j->next = NULL;
-
-
 	return j;
 }
 
 
 /* Called in forked child. */
-static void launch_Process (Process* p, pid_t pgid, int background, char** tokens)
+static void launch_Process (volatile Process* p, int background, int pipe_in, int pipe_out, char** tokens)
 {
-	/* Place in Process Group */
-	pid_t pid = getpid();
-	if (pgid == 0)
-		pgid = pid;
-	setpgid(p->pid, pgid);
-
-
 	/* Reset Signals */
 	signal(SIGINT, SIG_DFL);
 	signal(SIGTSTP, SIG_DFL);
@@ -239,19 +249,36 @@ static void launch_Process (Process* p, pid_t pgid, int background, char** token
 	if (p->in != -1)
 	{
 		if (dup2(p->in, STDIN_FILENO) == -1)
-			perror("yash: redirect stdin");
+			perror("yash: redirecting stdin");
 		close(p->in);
 	}
+	else if (pipe_in != -1)
+	{
+		if (dup2(pipe_in, STDIN_FILENO) == -1)
+			perror("yash: pipe in");
+		close(pipe_in);
+	}
+
 	if (p->out != -1)
 	{
 		if (dup2(p->out, STDOUT_FILENO) == -1)
-			perror("yash: redirect stdout");
+			perror("yash: redirecting stdout");
 		close(p->out);
 	}
+	else if (pipe_out != -1)
+	{
+		if (dup2(pipe_out, STDOUT_FILENO) == -1)
+		{
+			fprintf(stderr, "(%d) ", pipe_out);
+			perror("yash: pipe out");
+		}
+		close(pipe_out);
+	}
+
 	if (p->err != -1)
 	{
 		if (dup2(p->err, STDERR_FILENO) == -1)
-			perror("yash: redirect stderr");
+			perror("yash: redirecting stderr");
 		close(p->err);
 	}
 
@@ -275,30 +302,45 @@ static void launch_Process (Process* p, pid_t pgid, int background, char** token
 int launch_Job (volatile Job* j)
 {
 	pid_t pid;
-	int mypipe[2], infile;
+
+	struct{
+		union{
+			int array[2];
+			struct{
+			int next_in,
+				out;
+			};
+		};
+		int in;
+	} Pipe = {{.next_in=-1, .out=-1}, .in=-1};
 
 
 	int i = 0;
-	Process* p = j->p;
+	volatile Process* p = j->p;
 	do
 	{
+		/* Cleaning pipes */
 		if (i > 0)
 		{
-			close(mypipe[1]); // close pipe-out of previous process
-			infile = mypipe[0]; // save pipe-in and close after launching process
+			close(Pipe.out); // close pipe-out of previous process
+			Pipe.in = Pipe.next_in; // save pipe-in to close after launching process
 		}
+
+		/* Pipe (if not last process) */
 		if (p->next != NULL)
 		{
-			if (pipe(mypipe) == -1)
+			if (pipe(Pipe.array) == -1)
 			{
 				perror("yash: pipe");
 				return -1;
 			}
-			p->out = mypipe[1]; // hook up pipe-out
-			p->next->in = mypipe[0]; // hook up next process's pipe-in
 		}
+		else
+			Pipe.out=-1;
 
 		pid = fork();
+
+		/* Fork Error */
 		if (pid == -1)
 		{
 			perror("yash: fork");
@@ -308,19 +350,29 @@ int launch_Job (volatile Job* j)
 		/* Child */
 		else if (pid == 0)
 		{
-			if (p->next != NULL)
-				close(mypipe[0]);
-			launch_Process(p, j->pgid, j->background, token_starts[i]);
+			/* Place Child Process in Job process group.
+			   Repeated x2 for guarantee.			 */
+			pid_t pid = getpid();
+			if (j->pgid == 0)
+				j->pgid = pid;
+			setpgid(pid, j->pgid);
+
+			launch_Process(p, j->background, Pipe.in, Pipe.out, token_starts[i]);
 		}
 
 		/* Parent */
-		p->pid = pid;
-		if (j->pgid == 0)
-			j->pgid = pid;
-		setpgid(pid, j->pgid); // Put child in the job process group
+		else
+		{
+			/* Place Child Process in Job process group.
+			   Repeated x2 for guarantee.			 */
+			p->pid = pid;
+			if (j->pgid == 0)
+				j->pgid = pid;
+			setpgid(pid, j->pgid); // Put child in the job process group
+		}
 
 		if (i > 0)
-			close(infile); // close pipe-in of child
+			close(Pipe.in); // close pipe-in of child
 
 		p = p->next;
 		i++;
@@ -355,19 +407,22 @@ int main(int argc, char* argv[])
 			continue;
 
 		first_job = make_Job(tokens);
+		if (first_job == NULL)
+			continue;
+
 		launch_Job(first_job);
 		destroy_Job(first_job);
 		first_job = NULL;
 	}
 
 	/* Display for debug */
-	usleep(150000);
-	int f = open("out.txt",O_RDONLY);
+	/*usleep(150000);
+	int f = open("/home/spenceryue/out.txt",O_RDONLY);
 
 	char c[64];
 	ssize_t bytes = 0;
 	while ((bytes = read(f, c, 64)))
-		write(STDOUT_FILENO, c, bytes);
+		write(STDOUT_FILENO, c, bytes);*/
 }
 #endif
 /* Test JOB */
