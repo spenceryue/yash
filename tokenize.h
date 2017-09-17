@@ -71,7 +71,7 @@ char* concat_tokens (char** tokens, const char* sep)
 		return NULL;
 
 	int N = count_tokens(tokens);
-	if (N <= 0)
+	if (N == 0)
 		return NULL;
 
 	size_t* length = (size_t*) malloc(N * sizeof(size_t));
@@ -108,10 +108,8 @@ void print_tokens(char** tokens)
 	if (tokens == NULL)
 		return;
 
-	printf("Token count: %d\n", count_tokens(tokens));
-
 	char* str = concat_tokens(tokens, "\", \"");
-	printf("tokens: [\"%s\"]\n", str ? str : "");
+	printf("(%d) \t[\"%s\"]\n", count_tokens(tokens), str ? str : "");
 	free(str);
 }
 
@@ -125,7 +123,7 @@ void print_tokens(char** tokens)
 #include <stdlib.h>
 #include "parse_tokens.h"
 #include <unistd.h>
-
+#include <signal.h>
 int main(int argc, char* argv[])
 {
 	printf("%d %d\n", MAX_CHARS, MAX_TOKENS);
