@@ -13,6 +13,7 @@
 #include "parse_tokens.h"
 // #define NDEBUG
 #include <assert.h>			// assert
+#include "faces.h"
 
 #define MAX_PIPE_MEMBERS 100
 
@@ -143,7 +144,7 @@ static Process* make_Process (char** tokens)
 	Process* p = (Process*) malloc(sizeof(Process));
 	if (p == NULL)
 	{
-		perror("yash: make_Process: malloc");
+		perror(flip_table " yash: make_Process: malloc");
 		return NULL;
 	}
 
@@ -203,7 +204,7 @@ Job* make_Job (char** tokens)
 	Job* j = (Job*) malloc(sizeof(Job));
 	if (j == NULL)
 	{
-		perror("yash: make_Job: malloc");
+		perror(flip_table " yash: make_Job: malloc");
 		return NULL;
 	}
 
@@ -253,35 +254,35 @@ Job* make_Job (char** tokens)
 /* Called in forked child. */
 static void launch_Process (Process* p, int pipe_in, int pipe_out, char** tokens)
 {
-	printf("My pid: %d, pgid: %d\n", getpid(), getpgid(0));
+	// printf("My pid: %d, pgid: %d\n", getpid(), getpgid(0));
 
 	/* Reset Signals */
-	if (signal (SIGINT, SIG_DFL) == SIG_ERR) perror("yash: signal");
-	if (signal (SIGQUIT, SIG_DFL) == SIG_ERR) perror("yash: signal");
-	if (signal (SIGTSTP, SIG_DFL) == SIG_ERR) perror("yash: signal");
-	if (signal (SIGTTIN, SIG_DFL) == SIG_ERR) perror("yash: signal");
-	if (signal (SIGTTOU, SIG_DFL) == SIG_ERR) perror("yash: signal");
-	if (signal (SIGCHLD, SIG_DFL) == SIG_ERR) perror("yash: signal");
+	if (signal (SIGINT, SIG_DFL) == SIG_ERR)  perror(flip_table " yash: signal");
+	if (signal (SIGQUIT, SIG_DFL) == SIG_ERR) perror(flip_table " yash: signal");
+	if (signal (SIGTSTP, SIG_DFL) == SIG_ERR) perror(flip_table " yash: signal");
+	if (signal (SIGTTIN, SIG_DFL) == SIG_ERR) perror(flip_table " yash: signal");
+	if (signal (SIGTTOU, SIG_DFL) == SIG_ERR) perror(flip_table " yash: signal");
+	if (signal (SIGCHLD, SIG_DFL) == SIG_ERR) perror(flip_table " yash: signal");
 
 
 	/* Init Pipes/Redirects */
 	if (p->in != -1)
 	{
 		if (dup2(p->in, STDIN_FILENO) == -1)
-			perror("yash: redirecting stdin");
+			perror(flip_table " yash: redirecting stdin");
 		close(p->in);
 	}
 	else if (pipe_in != -1)
 	{
 		if (dup2(pipe_in, STDIN_FILENO) == -1)
-			perror("yash: pipe in");
+			perror(flip_table " yash: pipe in");
 		close(pipe_in);
 	}
 
 	if (p->out != -1)
 	{
 		if (dup2(p->out, STDOUT_FILENO) == -1)
-			perror("yash: redirecting stdout");
+			perror(flip_table " yash: redirecting stdout");
 		close(p->out);
 	}
 	else if (pipe_out != -1)
@@ -289,7 +290,7 @@ static void launch_Process (Process* p, int pipe_in, int pipe_out, char** tokens
 		if (dup2(pipe_out, STDOUT_FILENO) == -1)
 		{
 			fprintf(stderr, "(%d) ", pipe_out);
-			perror("yash: pipe out");
+			perror(flip_table " yash: pipe out");
 		}
 		close(pipe_out);
 	}
@@ -297,7 +298,7 @@ static void launch_Process (Process* p, int pipe_in, int pipe_out, char** tokens
 	if (p->err != -1)
 	{
 		if (dup2(p->err, STDERR_FILENO) == -1)
-			perror("yash: redirecting stderr");
+			perror(flip_table " yash: redirecting stderr");
 		close(p->err);
 	}
 
@@ -309,7 +310,7 @@ static void launch_Process (Process* p, int pipe_in, int pipe_out, char** tokens
 		fprintf(stderr, "%s: command not found\n", tokens[0]);
 	else
 	{
-		fprintf(stderr, "yash: exec: ");
+		fprintf(stderr, flip_table " yash: exec: ");
 		perror(tokens[0]);
 	}
 
@@ -350,7 +351,7 @@ int launch_Job (Job* j)
 		{
 			if (pipe(Pipe.array) == -1)
 			{
-				perror("yash: pipe");
+				perror(flip_table " yash: pipe");
 				return -1;
 			}
 		}
@@ -363,7 +364,7 @@ int launch_Job (Job* j)
 		/* Fork Error */
 		if (pid == -1)
 		{
-			perror("yash: fork");
+			perror(flip_table " yash: fork");
 			return -1;
 		}
 
@@ -378,9 +379,9 @@ int launch_Job (Job* j)
 			if (pgid == 0)
 				pgid = pid;
 			setpgid(pid, pgid);
-			if (j->foreground)
+			if (j->foreground) // Let every process output to yash without triggering TTOU
 				if (tcsetpgrp (STDIN_FILENO, pgid) == -1)
-					perror("yash: tcsetpgrp");
+					perror(flip_table " yash: tcsetpgrp");
 
 			launch_Process(p, Pipe.in, Pipe.out, tmp_process_tokens[i]);
 		}
@@ -396,9 +397,9 @@ int launch_Job (Job* j)
 			if (pgid == 0)
 				j->pgid = pgid = pid;
 			setpgid(pid, pgid);
-			if (j->foreground)
+			if (j->foreground) // Let every process output to yash without triggering TTOU
 				if (tcsetpgrp (STDIN_FILENO, pgid) == -1)
-					perror("yash: tcsetpgrp");
+					perror(flip_table " yash: tcsetpgrp");
 		}
 
 		if (i > 0)
@@ -421,6 +422,7 @@ int launch_Job (Job* j)
 #include <stdio.h>			// setvbuf, freopen, printf
 #include <fcntl.h>			// open
 #include <unistd.h>			// usleep, close
+#include "faces.h"
 
 
 int main(int argc, char* argv[])
@@ -431,7 +433,7 @@ int main(int argc, char* argv[])
 		freopen("input.txt", "r", stdin);
 
 	if (!isatty(STDIN_FILENO))
-		printf("Warning: Job Control won't work because the program is not executing from a tty.\n");
+		printf(blank_face " Warning: Job Control won't work because the program is not executing from a tty.\n");
 
 	for (int i=0; read_line(stdin) != NULL; i++) {
 		char** tokens = set_tokens(" \t");

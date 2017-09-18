@@ -10,6 +10,7 @@
 #include "job.h"
 // #define NDEBUG
 #include <assert.h>			// assert
+#include "faces.h"
 
 int is_State (Job* j, State s)
 {
@@ -109,13 +110,13 @@ void get_Job_status (Job* j, int WAIT)
 
 		if (pid == -1)
 		{
-			perror("yash: waitpid");
+			perror(flip_table " yash: waitpid");
 			return;
 		}
 
 		if (WIFSIGNALED(status))
 		{
-			printf("killed by signal %d\n", WTERMSIG(status));
+			// printf("killed by signal %d\n", WTERMSIG(status));
 			// j->foreground = 0; // hacky way to make the Job print
 							   // (should make a dedicated display variable...)
 		}
@@ -289,18 +290,24 @@ int launch_builtin (char** tokens)
 
 /* Test JOB_CONTROL */
 #if __INCLUDE_LEVEL__ == 0 && defined __INCLUDE_LEVEL__
-#include <stdio.h>			// setvbuf, freopen, printf
-#include <fcntl.h>			// open
-#include <unistd.h>			// usleep, close
+#include <signal.h>			// kill, signal
+#include <stdio.h>			// printf, fflush, setvbuf, perror
+#include <unistd.h>			// isatty, setpgid, tcgetpgrp, tcsetpgrp, getpgid, getpid
+#include <stdlib.h>			// exit, atexit
 #include "tokenize.h"
 #include "job.h"
+#include "faces.h"
+#include <string.h>			// strcmp
+
 
 void exit_handler ()
 {
 	for (Job* j = current_Job; j != NULL; j = j->next)
 		kill (- j->pgid, SIGHUP);
 	destroy_Job(current_Job);
+	printf("exit\n");
 }
+
 
 void signal_handler (int signo)
 {
@@ -313,44 +320,58 @@ void signal_handler (int signo)
 	}
 }
 
+
 int main(int argc, char* argv[])
 {
 	setvbuf(stdout, NULL, _IOLBF, BUFSIZ);
 
+
+	if (argc == 2 && strcmp(argv[1], "pikachu") == 0)
+		fprintf(stderr,
+			"\n"
+			"         YASH!"
+			pikachu "\n"
+			"(...and his best friend ^)\n\n"
+		);
+
+
 	if (!isatty(STDIN_FILENO))
 	{
-		fprintf(stderr, "yash: abort reason: Job control won't work because yash is not executing from a tty\n");
+		fprintf(stderr, flip_table " yash: abort reason: Job control won't work because yash is not executing from a tty\n");
 		exit(1);
 	}
 
+
 	if (setpgid(0,0) == -1)
 	{
-		perror ("yash: abort reason: Couldn't put yash in its own process group");
+		perror (flip_table " yash: abort reason: Couldn't put yash in its own process group");
 		exit (1);
 	}
 	// printf("My pid: %d, pgid: %d\n", getpid(), getpgid(0));
+
 
 	while (tcgetpgrp (STDIN_FILENO) != getpgid(0))
 		kill (- getpgid(0), SIGTTIN);
 
 
-	tcsetpgrp(STDIN_FILENO, getpid());
+	if (tcsetpgrp(STDIN_FILENO, getpid()) == -1)
+	{
+		perror(flip_table " yash: abort reason: Couldn't obtain control of the terminal");
+		exit (1);
+	}
+
 
 	atexit(exit_handler);
-	if (signal(SIGINT, signal_handler) == SIG_ERR)
-		perror("yash: signal");
-	if (signal(SIGTSTP, signal_handler) == SIG_ERR)
-		perror("yash: signal");
 
-	if (signal (SIGCHLD, SIG_DFL) == SIG_ERR)
-		perror("yash: signal");
 
-	if (signal (SIGQUIT, SIG_IGN) == SIG_ERR)
-		perror("yash: signal");
-	if (signal (SIGTTIN, SIG_IGN) == SIG_ERR)
-		perror("yash: signal");
-	if (signal (SIGTTOU, SIG_IGN) == SIG_ERR)
-		perror("yash: signal");
+	if (signal(SIGINT, signal_handler) == SIG_ERR)	perror(flip_table " yash: signal");
+	if (signal(SIGTSTP, signal_handler) == SIG_ERR) perror(flip_table " yash: signal");
+
+	if (signal (SIGCHLD, SIG_DFL) == SIG_ERR)		perror(flip_table " yash: signal");
+
+	if (signal (SIGQUIT, SIG_IGN) == SIG_ERR)		perror(flip_table " yash: signal");
+	if (signal (SIGTTIN, SIG_IGN) == SIG_ERR)		perror(flip_table " yash: signal");
+	if (signal (SIGTTOU, SIG_IGN) == SIG_ERR)		perror(flip_table " yash: signal");
 
 
 	Job* j = NULL;
@@ -377,7 +398,7 @@ int main(int argc, char* argv[])
 		if (current_Job->foreground)
 			wait_Job(current_Job);
 	}
-	printf("exit\n");
+
 
 	return 0;
 }
