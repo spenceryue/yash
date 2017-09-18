@@ -17,40 +17,55 @@
 #define MAX_PIPE_MEMBERS 100
 
 
+typedef enum
+{
+	Error_State = -1,
+	Running_State,
+	Stopped_State,
+	Done_State
+} State;
+
+const char* state_strings[] =
+{
+	"Error",
+	"Running",
+	"Stopped",
+	"Done",
+};
+
+const char* get_state_string (State state)
+{
+	return state_strings[state + 1];
+}
+
 typedef struct Process
 {
 	pid_t pid;
 	int in, out, err;
 	int close_me[3];
-	int status;
-	volatile struct Process* next;
+	State state;
+	struct Process* next;
 } Process;
 
-typedef enum
-{
-	Running,
-	Stopped,
-	Done
-} JobState;
 
 typedef struct Job
 {
 	int index;
 	pid_t pgid;
 	char* command;
-	int background;
-	JobState state;
-	volatile Process* p;
+	int foreground;
+	State state;
+	Process* p;
 	struct Job* next;
 } Job;
 
 
-static char** token_starts[MAX_PIPE_MEMBERS] = {0};
-volatile static int job_count = 1;
-volatile static Job* first_job = NULL;
+static char** tmp_process_tokens[MAX_PIPE_MEMBERS] = {0};
+int Job_count = 1;
+Job* current_Job = NULL;
 
 
-static void destroy_Process (volatile Process* p)
+static void destroy_Process (Process* p)
 {
 	if (p == NULL)
 		return;
@@ -68,15 +83,15 @@ static void destroy_Process (volatile Process* p)
 }
 
 
-static void destroy_Job (volatile Job* j)
+static void destroy_Job (Job* j)
 {
 	if (j == NULL)
 		return;
 
 	if (j->p != NULL)
 	{
-		volatile Process* p = j->p;
-		volatile Process* next = p->next;
+		Process* p = j->p;
+		Process* next = p->next;
 		while (p != NULL)
 		{
 			destroy_Process(p);
@@ -139,6 +154,7 @@ static Process* make_Process (char** tokens)
 	p->err = -1;
 	for (int i=0; i<3; i++)
 		p->close_me[i] = 0;
+	p->state = Running_State;
 	p->next = NULL;
 
 
@@ -193,23 +209,23 @@ Job* make_Job (char** tokens)
 
 
 	/* Default initialization */
-	j->index = job_count++;
+	j->index = Job_count++;
 	j->pgid = 0;
 	j->command = concat_tokens(tokens," ");
-	j->background = 0;
-	j->state = Running;
+	j->foreground = 1;
+	j->state = Running_State;
 	j->next = NULL;
 
 
 	/* Make processes */
 	int i = 0;
-	volatile Process* last;
-	do
+	Process* last = NULL;
+	while (tokens != NULL && i < MAX_PIPE_MEMBERS)
 	{
 		char** next_tokens = set_pipe_start(tokens);
-		j->background |= has_ampersand(tokens);
+		j->foreground &= !has_ampersand(tokens);
 
-		volatile Process* p;
+		Process* p = NULL;
 		if (i == 0)
 			p = j->p = make_Process(tokens);
 		else
@@ -225,11 +241,10 @@ Job* make_Job (char** tokens)
 		set_args_end(tokens);
 
 		last = p;
-		token_starts[i] = tokens;
+		tmp_process_tokens[i] = tokens;
 		tokens = next_tokens;
 		i++;
 	}
-	while (tokens != NULL && i < MAX_PIPE_MEMBERS);
 
 
 	return j;
@@ -237,14 +252,14 @@ Job* make_Job (char** tokens)
 
 
 /* Called in forked child. */
-static void launch_Process (volatile Process* p, int background, int pipe_in, int pipe_out, char** tokens)
+static void launch_Process (Process* p, int pipe_in, int pipe_out, char** tokens)
 {
 	/* Reset Signals */
 	signal(SIGINT, SIG_DFL);
 	signal(SIGTSTP, SIG_DFL);
 	signal(SIGCHLD, SIG_DFL);
 
-
+	fprintf(stderr, "pid: %d, pgid: %d\n", getpid(), getpgid(0));
 	/* Init Pipes/Redirects */
 	if (p->in != -1)
 	{
@@ -295,13 +310,13 @@ static void launch_Process (volatile Process* p, int background, int pipe_in, in
 	}
 
 
-	exit(1);
+	_exit(1);
 }
 
 
-int launch_Job (volatile Job* j)
+int launch_Job (Job* j)
 {
-	pid_t pid;
+	pid_t pid, pgid;
 
 	struct{
 		union{
@@ -316,8 +331,8 @@ int launch_Job (volatile Job* j)
 
 
 	int i = 0;
-	volatile Process* p = j->p;
-	do
+	Process* p = j->p;
+	while (p != NULL)
 	{
 		/* Cleaning pipes */
 		if (i > 0)
@@ -339,6 +354,7 @@ int launch_Job (volatile Job* j)
 			Pipe.out=-1;
 
 		pid = fork();
+		pgid = j->pgid;
 
 		/* Fork Error */
 		if (pid == -1)
@@ -351,24 +367,28 @@ int launch_Job (volatile Job* j)
 		else if (pid == 0)
 		{
 			/* Place Child Process in Job process group.
-			   Repeated x2 for guarantee.			 */
+			   Repeated x2 to avoid race condition (I think). */
 			pid_t pid = getpid();
-			if (j->pgid == 0)
-				j->pgid = pid;
-			setpgid(pid, j->pgid);
+			if (pgid == 0)
+				pgid = pid;
+			setpgid(pid, pgid);
+			if (pgid == 0 && j->foreground)
+				tcsetpgrp (STDIN_FILENO, pgid);
 
-			launch_Process(p, j->background, Pipe.in, Pipe.out, token_starts[i]);
+			launch_Process(p, Pipe.in, Pipe.out, tmp_process_tokens[i]);
 		}
 
 		/* Parent */
 		else
 		{
 			/* Place Child Process in Job process group.
-			   Repeated x2 for guarantee.			 */
+			   Repeated x2 to avoid race condition (I think). */
 			p->pid = pid;
-			if (j->pgid == 0)
-				j->pgid = pid;
-			setpgid(pid, j->pgid); // Put child in the job process group
+			if (pgid == 0)
+				j->pgid = pgid = pid;
+			setpgid(pid, pgid);
+			if (pgid == 0 && j->foreground)
+				tcsetpgrp (STDIN_FILENO, pgid);
 		}
 
 		if (i > 0)
@@ -377,7 +397,6 @@ int launch_Job (volatile Job* j)
 		p = p->next;
 		i++;
 	}
-	while (p != NULL);
 
 
 	return 0;
@@ -389,7 +408,9 @@ int launch_Job (volatile Job* j)
 
 /* Test JOB */
 #if __INCLUDE_LEVEL__ == 0 && defined __INCLUDE_LEVEL__
-#include <stdio.h>
+#include <stdio.h>			// setvbuf, freopen, printf
+#include <fcntl.h>			// open
+#include <unistd.h>			// usleep, close
 
 
 int main(int argc, char* argv[])
@@ -406,23 +427,40 @@ int main(int argc, char* argv[])
 		if (no_tokens(tokens))
 			continue;
 
-		first_job = make_Job(tokens);
-		if (first_job == NULL)
+		current_Job = make_Job(tokens);
+		if (current_Job == NULL)
 			continue;
 
-		launch_Job(first_job);
-		destroy_Job(first_job);
-		first_job = NULL;
+		launch_Job(current_Job);
+		destroy_Job(current_Job);
+		current_Job = NULL;
 	}
 
 	/* Display for debug */
-	/*usleep(150000);
-	int f = open("/home/spenceryue/out.txt",O_RDONLY);
+	usleep(150000);
+	int o = open("out.txt",O_RDONLY);
+	int o2 = open("out2.txt",O_RDONLY);
+	int e = open("error.txt",O_RDONLY);
 
 	char c[64];
 	ssize_t bytes = 0;
-	while ((bytes = read(f, c, 64)))
-		write(STDOUT_FILENO, c, bytes);*/
+	printf("out.txt:\n");
+	while ((bytes = read(o, c, 64)))
+		write(STDOUT_FILENO, c, bytes);
+	printf("\n\n");
+
+	printf("out2.txt:\n");
+	while ((bytes = read(o2, c, 64)))
+		write(STDOUT_FILENO, c, bytes);
+	printf("\n\n");
+
+	printf("error.txt:\n");
+	while ((bytes = read(e, c, 64)))
+		write(STDOUT_FILENO, c, bytes);
+
+	close(o);
+	close(o2);
+	close(e);
 }
 #endif
 /* Test JOB */
