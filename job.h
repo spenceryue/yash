@@ -80,7 +80,7 @@ static void destroy_Process (Process* p)
 	if (p->err != -1 && p->close_me[2])
 		close(p->err);
 
-	free((Process*) p);
+	free(p);
 }
 
 
@@ -104,7 +104,7 @@ static void destroy_Job (Job* j)
 
 	free(j->command);
 
-	free((Job*) j);
+	free(j);
 }
 
 

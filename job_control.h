@@ -12,6 +12,7 @@
 #include <assert.h>			// assert
 #include "faces.h"
 
+
 int is_State (Job* j, State s)
 {
 	if (s == Error_State)
@@ -65,7 +66,17 @@ Process* find_Process (pid_t pid)
 	for (Job* j = current_Job; j != NULL; j = j->next)
 		for (Process* p = j->p; p != NULL; p = p->next)
 			if (p->pid == pid)
-				return (Process*) p;
+				return p;
+
+	return NULL;
+}
+
+Job* find_Job (pid_t pid)
+{
+	for (Job* j = current_Job; j != NULL; j = j->next)
+		for (Process* p = j->p; p != NULL; p = p->next)
+			if (p->pid == pid)
+				return j;
 
 	return NULL;
 }
@@ -79,9 +90,21 @@ void update_Process (Process* p, int status)
 		// fprintf(stderr, "Marking (%d): %s\n", p->pid, get_state_string(Stopped_State));
 		p->state = Stopped_State;
 	}
-	else if (WIFEXITED(status) || WIFSIGNALED(status))
+	else if (WIFEXITED(status))
 	{
 		// fprintf(stderr, "Marking (%d): %s\n", p->pid, get_state_string(Done_State));
+		p->state = Done_State;
+	}
+	else if (WIFSIGNALED(status))
+	{
+		// fprintf(stderr, "Marking (%d): %s\n", p->pid, get_state_string(Done_State));
+		if (WTERMSIG(status) != 2) // Signal 2 is Ctrl+C
+		{
+			Job* parent = find_Job(p->pid);
+			parent->foreground = 0;	// exited while stopped from a signal,
+									// means probably a "kill <pid>" was sent in the shell.
+									// (in any case: want to print)
+		}
 		p->state = Done_State;
 	}
 	else
@@ -112,13 +135,6 @@ void get_Job_status (Job* j, int WAIT)
 		{
 			perror(flip_table " yash: waitpid");
 			return;
-		}
-
-		if (WIFSIGNALED(status))
-		{
-			// printf("killed by signal %d\n", WTERMSIG(status));
-			// j->foreground = 0; // hacky way to make the Job print
-							   // (should make a dedicated display variable...)
 		}
 
 		Process* p = find_Process(pid);
