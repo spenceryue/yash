@@ -7,8 +7,8 @@
 
 #define MAX_CHARS 2000
 #define MAX_TOKENS MAX_CHARS/2
-static char input_buffer[MAX_CHARS] = {0};
-static char* token_array[MAX_TOKENS] = {0};
+static char input_buffer[MAX_CHARS+1] = {0};
+static char* token_array[MAX_TOKENS+1] = {0};
 
 
 char* read_line (FILE* input_stream)

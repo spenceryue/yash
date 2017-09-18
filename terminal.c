@@ -67,22 +67,22 @@ int main(void)
 
 		/* parent */
 		else do {
-            pid = waitpid(pid, &status, WUNTRACED | WCONTINUED);
-            if (pid == -1) {
-                perror("waitpid");
-                exit(EXIT_FAILURE);
-            }
+			pid = waitpid(pid, &status, WUNTRACED | WCONTINUED);
+			if (pid == -1) {
+				perror("waitpid");
+				exit(EXIT_FAILURE);
+			}
 
-           if (WIFEXITED(status)) {
-                printf("exited, status=%d\n", WEXITSTATUS(status));
-            } else if (WIFSIGNALED(status)) {
-                printf("killed by signal %d\n", WTERMSIG(status));
-            } else if (WIFSTOPPED(status)) {
-                printf("stopped by signal %d\n", WSTOPSIG(status));
-            } else if (WIFCONTINUED(status)) {
-                printf("continued\n");
-            }
-        } while (!WIFEXITED(status) && !WIFSIGNALED(status));
+			if (WIFEXITED(status)) {
+				printf("exited, status=%d\n", WEXITSTATUS(status));
+			} else if (WIFSIGNALED(status)) {
+				printf("killed by signal %d\n", WTERMSIG(status));
+			} else if (WIFSTOPPED(status)) {
+				printf("stopped by signal %d\n", WSTOPSIG(status));
+			} else if (WIFCONTINUED(status)) {
+				printf("continued\n");
+			}
+		} while (!WIFEXITED(status) && !WIFSIGNALED(status));
 
 		// if ((pid = waitpid(pid, &status, 0)) == -1)
 		// 	perror("waitpid error");

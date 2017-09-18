@@ -4,9 +4,9 @@
 #include <stdio.h>			// FILE
 #include <string.h>			// strtok, strlen
 
-void replace_all (char* str, const char* target, const char replacement)
+void replace_all (char* str, const char* key, const char replacement)
 {
-	while((str = strpbrk(str, target)) != NULL)
+	while((str = strpbrk(str, key)) != NULL)
 		*str = replacement;
 }
 

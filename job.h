@@ -53,7 +53,7 @@ typedef struct Job
 	int index;
 	pid_t pgid;
 	char* command;
-	int foreground;
+	int foreground; // only meaningful before launch or while in Running_State
 	State state;
 	Process* p;
 	struct Job* next;
@@ -107,7 +107,7 @@ static void destroy_Job (Job* j)
 }
 
 
-static int redirect_it (Process* p, char* path, int which)
+static int set_redirect (Process* p, char* path, int which)
 {
 	if (path == NULL)
 		return 0;
@@ -186,7 +186,7 @@ static Process* make_Process (char** tokens)
 
 	/* Parse redirects (in received order) */
 	for (int i=0; i<3; i++)
-		if (redirect_it(p, path[index[i]], index[i]) == -1)
+		if (set_redirect(p, path[index[i]], index[i]) == -1)
 			return NULL;
 
 
@@ -212,7 +212,7 @@ Job* make_Job (char** tokens)
 	j->index = Job_count++;
 	j->pgid = 0;
 	j->command = concat_tokens(tokens," ");
-	j->foreground = 1;
+	j->foreground = !has_ampersand(tokens);
 	j->state = Running_State;
 	j->next = NULL;
 
@@ -223,7 +223,6 @@ Job* make_Job (char** tokens)
 	while (tokens != NULL && i < MAX_PIPE_MEMBERS)
 	{
 		char** next_tokens = set_pipe_start(tokens);
-		j->foreground &= !has_ampersand(tokens);
 
 		Process* p = NULL;
 		if (i == 0)
@@ -254,12 +253,17 @@ Job* make_Job (char** tokens)
 /* Called in forked child. */
 static void launch_Process (Process* p, int pipe_in, int pipe_out, char** tokens)
 {
-	/* Reset Signals */
-	signal(SIGINT, SIG_DFL);
-	signal(SIGTSTP, SIG_DFL);
-	signal(SIGCHLD, SIG_DFL);
+	printf("My pid: %d, pgid: %d\n", getpid(), getpgid(0));
 
-	fprintf(stderr, "pid: %d, pgid: %d\n", getpid(), getpgid(0));
+	/* Reset Signals */
+	if (signal (SIGINT, SIG_DFL) == SIG_ERR) perror("yash: signal");
+	if (signal (SIGQUIT, SIG_DFL) == SIG_ERR) perror("yash: signal");
+	if (signal (SIGTSTP, SIG_DFL) == SIG_ERR) perror("yash: signal");
+	if (signal (SIGTTIN, SIG_DFL) == SIG_ERR) perror("yash: signal");
+	if (signal (SIGTTOU, SIG_DFL) == SIG_ERR) perror("yash: signal");
+	if (signal (SIGCHLD, SIG_DFL) == SIG_ERR) perror("yash: signal");
+
+
 	/* Init Pipes/Redirects */
 	if (p->in != -1)
 	{
@@ -316,7 +320,7 @@ static void launch_Process (Process* p, int pipe_in, int pipe_out, char** tokens
 
 int launch_Job (Job* j)
 {
-	pid_t pid, pgid;
+	pid_t pid = 0, pgid = 0;
 
 	struct{
 		union{
@@ -367,13 +371,16 @@ int launch_Job (Job* j)
 		else if (pid == 0)
 		{
 			/* Place Child Process in Job process group.
-			   Repeated x2 to avoid race condition (I think). */
-			pid_t pid = getpid();
+			   Repeated x2 to avoid race condition.
+			   Controlling Terminal set at every child,
+			   also to avoid race condition. */
+			pid = getpid();
 			if (pgid == 0)
 				pgid = pid;
 			setpgid(pid, pgid);
-			if (pgid == 0 && j->foreground)
-				tcsetpgrp (STDIN_FILENO, pgid);
+			if (j->foreground)
+				if (tcsetpgrp (STDIN_FILENO, pgid) == -1)
+					perror("yash: tcsetpgrp");
 
 			launch_Process(p, Pipe.in, Pipe.out, tmp_process_tokens[i]);
 		}
@@ -382,13 +389,16 @@ int launch_Job (Job* j)
 		else
 		{
 			/* Place Child Process in Job process group.
-			   Repeated x2 to avoid race condition (I think). */
+			   Repeated x2 to avoid race condition.
+			   Controlling Terminal set at every child,
+			   also to avoid race condition. */
 			p->pid = pid;
 			if (pgid == 0)
 				j->pgid = pgid = pid;
 			setpgid(pid, pgid);
-			if (pgid == 0 && j->foreground)
-				tcsetpgrp (STDIN_FILENO, pgid);
+			if (j->foreground)
+				if (tcsetpgrp (STDIN_FILENO, pgid) == -1)
+					perror("yash: tcsetpgrp");
 		}
 
 		if (i > 0)
@@ -419,6 +429,9 @@ int main(int argc, char* argv[])
 
 	if (argc == 1)
 		freopen("input.txt", "r", stdin);
+
+	if (!isatty(STDIN_FILENO))
+		printf("Warning: Job Control won't work because the program is not executing from a tty.\n");
 
 	for (int i=0; read_line(stdin) != NULL; i++) {
 		char** tokens = set_tokens(" \t");

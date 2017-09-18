@@ -2,6 +2,8 @@
 #include <stdlib.h>
 #include <sys/time.h>
 #include <assert.h>
+#include <signal.h>			// SIGINT, SIGTSTP, signal, SIG_ERR
+#include <unistd.h>
 
 
 double GetTime() {
@@ -17,9 +19,30 @@ void Spin(int howlong) {
 	; // do nothing in loop
 }
 
+void handler (int signum)
+{
+	signal (SIGTSTP, SIG_DFL);
+
+	raise(SIGTSTP);
+}
+
 int main(int argc, char *argv[])
 {
 	setvbuf(stdout, NULL, _IONBF, 0);
+
+	while (tcgetpgrp (STDIN_FILENO) != getpgid(0))
+		kill (- getpgid(0), SIGTTIN);
+
+	struct sigaction temp;
+
+	sigaction (SIGTSTP, NULL, &temp);
+
+	if (temp.sa_handler != SIG_DFL)
+	{
+		fprintf(stderr, "%s\n", "Warning! sigtstp isn't default handled.");
+	}
+	else
+		fprintf(stderr, "%s\n", "All happy!");
 
 	char* str;
 	if (argc == 1)
