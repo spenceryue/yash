@@ -9,9 +9,9 @@
 #include <stdio.h>			// fprintf, perror
 #include <errno.h>			// ENOENT
 #include <string.h>			// strdup
+#include <termios.h>		// struct termios, tcsetattr, tcgetattr
 #include "tokenize.h"
 #include "parse_tokens.h"
-// #define NDEBUG
 #include <assert.h>			// assert
 #include "faces.h"
 
@@ -53,17 +53,20 @@ typedef struct Job
 {
 	int index;
 	pid_t pgid;
+	int foreground;
 	char* command;
-	int foreground; // only meaningful before launch or while in Running_State
 	State state;
 	Process* p;
+	struct termios tmodes;
 	struct Job* next;
 } Job;
 
 
-static char** tmp_process_tokens[MAX_PIPE_MEMBERS] = {0};
+static char** tmp_process_tokens[MAX_PIPE_MEMBERS] = {NULL};
 int Job_count = 1;
 Job* current_Job = NULL;
+struct termios shell_tmodes;
+pid_t shell_pid = -1;
 
 
 static void destroy_Process (Process* p)
@@ -212,9 +215,10 @@ Job* make_Job (char** tokens)
 	/* Default initialization */
 	j->index = Job_count++;
 	j->pgid = 0;
+	j->foreground = !clear_ampersand(tokens);
 	j->command = concat_tokens(tokens," ");
-	j->foreground = !has_ampersand(tokens);
 	j->state = Running_State;
+	j->tmodes = shell_tmodes;
 	j->next = NULL;
 
 
@@ -379,7 +383,7 @@ int launch_Job (Job* j)
 			if (pgid == 0)
 				pgid = pid;
 			setpgid(pid, pgid);
-			if (j->foreground) // Let every process output to yash without triggering TTOU
+			if (j->foreground)
 				if (tcsetpgrp (STDIN_FILENO, pgid) == -1)
 					perror(flip_table " yash: tcsetpgrp");
 
@@ -397,7 +401,7 @@ int launch_Job (Job* j)
 			if (pgid == 0)
 				j->pgid = pgid = pid;
 			setpgid(pid, pgid);
-			if (j->foreground) // Let every process output to yash without triggering TTOU
+			if (j->foreground)
 				if (tcsetpgrp (STDIN_FILENO, pgid) == -1)
 					perror(flip_table " yash: tcsetpgrp");
 		}

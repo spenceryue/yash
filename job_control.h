@@ -7,13 +7,14 @@
 #include <sys/wait.h>		// wait
 #include <stdio.h>			// fprintf, perror
 #include <errno.h>			// ECHILD
+#include <string.h>			// strcpy
+#include <termios.h>		// tcsetattr, tcgetattr
 #include "job.h"
-// #define NDEBUG
 #include <assert.h>			// assert
 #include "faces.h"
 
 
-int is_State (Job* j, State s)
+static int is_State (Job* j, State s)
 {
 	if (s == Error_State)
 	{
@@ -37,6 +38,7 @@ int is_State (Job* j, State s)
 				// fprintf(stderr, "Job (%s) not %s: %s\n", j->command, get_state_string(s), get_state_string(p->state));
 				return 0;
 			}
+		// fprintf(stderr, "Job (%s) is %s\n", j->command, get_state_string(s));
 		return 1;
 	}
 }
@@ -81,7 +83,16 @@ Job* find_Job (pid_t pid)
 	return NULL;
 }
 
-void update_Process (Process* p, int status)
+int count_Jobs (Job* j)
+{
+	int result = 0;
+	for (; j != NULL; j = j->next)
+		result++;
+
+	return result;
+}
+
+static void update_Process (Process* p, int status)
 {
 	assert (p != NULL);
 
@@ -98,7 +109,7 @@ void update_Process (Process* p, int status)
 	else if (WIFSIGNALED(status))
 	{
 		// fprintf(stderr, "Marking (%d): %s\n", p->pid, get_state_string(Done_State));
-		if (WTERMSIG(status) != 2) // Signal 2 is Ctrl+C
+		if (WTERMSIG(status) != 2) // hack: Signal 2 is Ctrl+C
 		{
 			Job* parent = find_Job(p->pid);
 			parent->foreground = 0;	// exited while stopped from a signal,
@@ -114,7 +125,14 @@ void update_Process (Process* p, int status)
 	}
 }
 
-void get_Job_status (Job* j, int WAIT)
+static void mark_Job (Job* j, State s)
+{
+	j->state = s;
+	for (Process* p = j->p; p != NULL; p = p->next)
+		p->state = s;
+}
+
+static void get_Job_status (Job* j, int WAIT)
 {
 	if (j == NULL)
 		return;
@@ -127,9 +145,14 @@ void get_Job_status (Job* j, int WAIT)
 	{
 		pid = waitpid(WAIT_ANY, &status, options);
 
-		if ((!WAIT && pid == 0) ||
-			(pid == -1 && errno == ECHILD))
+		if (!WAIT && pid == 0)
 			return; // Still Running
+
+		if (WAIT && pid == -1 && errno == ECHILD)
+		{
+			mark_Job(j, Done_State); // hack: Mark Job as Done... Somehow it skipped being a zombie
+			break;
+		}
 
 		if (pid == -1)
 		{
@@ -149,16 +172,22 @@ void get_Job_status (Job* j, int WAIT)
 	if (is_Done(j))
 		j->state = Done_State;
 	else
+	{
+		if (WAIT && j->foreground)
+			tcgetattr(STDIN_FILENO, &j->tmodes); // save Job's terminal modes
 		j->state = Stopped_State;
+	}
 }
 
 void update_Job (Job* j)
 {
+	// fprintf(stderr, "Entering %s\n", __PRETTY_FUNCTION__);
 	get_Job_status(j, 0);
 }
 
 void wait_Job (Job* j)
 {
+	// fprintf(stderr, "Entering %s\n", __PRETTY_FUNCTION__);
 	get_Job_status(j, 1);
 }
 
@@ -168,66 +197,107 @@ void update_Jobs ()
 		update_Job(j);
 }
 
-void print_Job_Compared (Job* j, Job* current)
+#define JOB_STRING_SIZE 1+32+1+1+2+24+2+2+1
+static char* get_Job_string (Job* j)
 {
-	printf("[%d]%c  %-24s%s\n",
+	static char buffer[JOB_STRING_SIZE+1];
+
+	sprintf(buffer,
+			"[%d]%c  %-24s%%s %c\n",
 			j->index,
-			(j == current) ? '+' : '-',
+			(j == current_Job) ? '+' : '-',
 			get_state_string(j->state),
-			j->command);
+			// fill in [ j->command ] using printf
+			j->foreground ? ' ' : '&'
+			);
+
+	return buffer;
 }
 
 void print_Job (Job* j)
 {
-	print_Job_Compared(j, current_Job);
+	printf(get_Job_string(j), j->command);
 }
 
-void print_Jobs (int LIST_ALL)
+/* Delete Done/Error jobs */
+void clean_Jobs(int UPDATE_FIRST)
 {
-	update_Jobs();
-
-	Job* saved_current_Job = current_Job;
+	if (UPDATE_FIRST)
+		update_Jobs();
 
 	Job* last = NULL;
-	Job *j = current_Job;
+	Job* j = current_Job;
 	while (j != NULL)
 	{
 		switch (j->state)
 		{
 			case Running_State:
 			case Stopped_State:
-				if (LIST_ALL)
-					print_Job_Compared(j, saved_current_Job);
 				last = j;
 				j = j->next;
 				break;
 			case Error_State:
 			case Done_State:
-				if (LIST_ALL || !j->foreground)
-					print_Job_Compared(j, saved_current_Job);
 				if (last != NULL)
 				{
 					last->next = j->next;
 					destroy_Job(j);
 					j = last;
+					Job_count--;
 				}
 				else
 				{
 					current_Job = j->next;
 					destroy_Job(j);
 					j = current_Job;
+					Job_count--;
 				}
 		}
 	}
 }
 
-void mark_Processes (Job* j, State s)
+void print_Jobs (int LIST_ALL)
 {
-	for (Process* p = j->p; p != NULL; p = p->next)
-		p->state = s;
+	update_Jobs();
+
+
+	char messages[Job_count][JOB_STRING_SIZE+1];
+	char* commands[Job_count];
+	int index = 0;
+
+
+	for (Job* j = current_Job; j != NULL; j = j->next)
+	{
+		switch (j->state)
+		{
+			case Running_State:
+			case Stopped_State:
+				if (LIST_ALL)
+				{
+					strcpy(messages[index], get_Job_string(j));
+					commands[index++] = j->command;
+				}
+				break;
+			case Error_State:
+			case Done_State:
+				if (LIST_ALL || !j->foreground)
+				{
+					strcpy(messages[index], get_Job_string(j));
+					commands[index++] = j->command;
+				}
+		}
+	}
+
+
+	/* Print in reverse order (oldest to newest) */
+	for (int i=index-1; 0<=i; --i)
+		printf(messages[i], commands[i]);
+
+
+	clean_Jobs(0);
 }
 
-void fg ()
+static void fg ()
 {
 	Job* j;
 
@@ -246,17 +316,23 @@ void fg ()
 		return;
 	}
 
-	j->foreground = 1;
-	j->state = Running_State;
-	mark_Processes(j, Running_State);
 
+	int save_Stopped_State = j->state == Stopped_State;
+	j->foreground = 1;
+	mark_Job(j, Running_State);
 	print_Job(j);
-	tcsetpgrp(STDIN_FILENO, current_Job->pgid);
-	kill(-current_Job->pgid, SIGCONT);
-	wait_Job(current_Job);
+
+
+	if (save_Stopped_State)
+		tcsetattr(STDIN_FILENO, TCSADRAIN, &j->tmodes); // restore Jobs terminal modes
+	tcsetpgrp(STDIN_FILENO, j->pgid);
+
+
+	kill(- j->pgid, SIGCONT);
+	wait_Job(j);
 }
 
-void bg ()
+static void bg ()
 {
 	Job* j;
 
@@ -271,11 +347,10 @@ void bg ()
 	}
 
 	j->foreground = 0;
-	j->state = Running_State;
-	mark_Processes(j, Running_State);
+	mark_Job(j, Running_State);
 
 	print_Job(j);
-	kill(-current_Job->pgid, SIGCONT);
+	kill(- j->pgid, SIGCONT);
 }
 
 int launch_builtin (char** tokens)
@@ -312,6 +387,7 @@ int launch_builtin (char** tokens)
 #include <stdlib.h>			// exit, atexit
 #include "tokenize.h"
 #include "job.h"
+#include "job_control.h"
 #include "faces.h"
 #include <string.h>			// strcmp
 
@@ -337,6 +413,17 @@ void signal_handler (int signo)
 }
 
 
+int prompt ()
+{
+	print_Jobs(0);
+	tcsetattr(STDIN_FILENO, TCSADRAIN, &shell_tmodes); // restore shell terminal modes
+	tcsetpgrp(STDIN_FILENO, shell_pid);
+
+	printf("# ");
+	return read_line(stdin) != NULL;
+}
+
+
 int main(int argc, char* argv[])
 {
 	setvbuf(stdout, NULL, _IOLBF, BUFSIZ);
@@ -354,14 +441,15 @@ int main(int argc, char* argv[])
 	if (!isatty(STDIN_FILENO))
 	{
 		fprintf(stderr, flip_table " yash: abort reason: Job control won't work because yash is not executing from a tty\n");
-		exit(1);
+		return 0;
 	}
 
 
+	shell_pid = getpid();
 	if (setpgid(0,0) == -1)
 	{
 		perror (flip_table " yash: abort reason: Couldn't put yash in its own process group");
-		exit (1);
+		return 0;
 	}
 	// printf("My pid: %d, pgid: %d\n", getpid(), getpgid(0));
 
@@ -373,8 +461,11 @@ int main(int argc, char* argv[])
 	if (tcsetpgrp(STDIN_FILENO, getpid()) == -1)
 	{
 		perror(flip_table " yash: abort reason: Couldn't obtain control of the terminal");
-		exit (1);
+		return 0;
 	}
+
+
+	tcgetattr (STDIN_FILENO, &shell_tmodes);
 
 
 	atexit(exit_handler);
@@ -391,11 +482,8 @@ int main(int argc, char* argv[])
 
 
 	Job* j = NULL;
-	while (tcsetpgrp(STDIN_FILENO, getpid()),
-		   printf("# "),
-		   read_line(stdin) != NULL)
+	while (prompt())
 	{
-		print_Jobs(0);
 		char** tokens = set_tokens(" \t");
 
 		if (no_tokens(tokens))

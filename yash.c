@@ -30,6 +30,17 @@ void signal_handler (int signo)
 }
 
 
+int prompt ()
+{
+	print_Jobs(0);
+	tcsetattr(STDIN_FILENO, TCSADRAIN, &shell_tmodes); // restore shell terminal modes
+	tcsetpgrp(STDIN_FILENO, shell_pid);
+
+	printf("# ");
+	return read_line(stdin) != NULL;
+}
+
+
 int main(int argc, char* argv[])
 {
 	setvbuf(stdout, NULL, _IOLBF, BUFSIZ);
@@ -47,14 +58,15 @@ int main(int argc, char* argv[])
 	if (!isatty(STDIN_FILENO))
 	{
 		fprintf(stderr, flip_table " yash: abort reason: Job control won't work because yash is not executing from a tty\n");
-		exit(1);
+		return 0;
 	}
 
 
+	shell_pid = getpid();
 	if (setpgid(0,0) == -1)
 	{
 		perror (flip_table " yash: abort reason: Couldn't put yash in its own process group");
-		exit (1);
+		return 0;
 	}
 	// printf("My pid: %d, pgid: %d\n", getpid(), getpgid(0));
 
@@ -66,8 +78,11 @@ int main(int argc, char* argv[])
 	if (tcsetpgrp(STDIN_FILENO, getpid()) == -1)
 	{
 		perror(flip_table " yash: abort reason: Couldn't obtain control of the terminal");
-		exit (1);
+		return 0;
 	}
+
+
+	tcgetattr (STDIN_FILENO, &shell_tmodes);
 
 
 	atexit(exit_handler);
@@ -84,11 +99,8 @@ int main(int argc, char* argv[])
 
 
 	Job* j = NULL;
-	while (tcsetpgrp(STDIN_FILENO, getpid()),
-		   printf("# "),
-		   read_line(stdin) != NULL)
+	while (prompt())
 	{
-		print_Jobs(0);
 		char** tokens = set_tokens(" \t");
 
 		if (no_tokens(tokens))

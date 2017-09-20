@@ -10,12 +10,13 @@
 static char input_buffer[MAX_CHARS+1] = {0};
 static char* token_array[MAX_TOKENS+1] = {0};
 
-
+#include <unistd.h>
 char* read_line (FILE* input_stream)
 {
 	char* response = fgets(input_buffer, MAX_CHARS, input_stream);
 	if (response == NULL)
 		return NULL;
+	// printf("LOOK: \"%s\"\n", input_buffer);
 
 	char* end = strchr(input_buffer, '\n');
 	if (end == NULL) { // example: "my_command arg0 arg1 ar^D" (EOF encountered, line non-empty)
@@ -147,13 +148,13 @@ int main(int argc, char* argv[])
 	get_redirect_in(tokens);
 	get_redirect_out(tokens);
 	get_redirect_error(tokens);
-	has_ampersand(tokens);
+	clear_ampersand(tokens);
 	set_args_end(tokens);
 
 	get_redirect_in(child_tokens);
 	get_redirect_out(child_tokens);
 	get_redirect_error(child_tokens);
-	has_ampersand(child_tokens);
+	clear_ampersand(child_tokens);
 	set_args_end(child_tokens);
 
 	print_tokens(tokens);
@@ -168,13 +169,13 @@ int main(int argc, char* argv[])
 		get_redirect_in(tokens);
 		get_redirect_out(tokens);
 		get_redirect_error(tokens);
-		has_ampersand(tokens);
+		clear_ampersand(tokens);
 		set_args_end(tokens);
 
 		get_redirect_in(child_tokens);
 		get_redirect_out(child_tokens);
 		get_redirect_error(child_tokens);
-		has_ampersand(child_tokens);
+		clear_ampersand(child_tokens);
 		set_args_end(child_tokens);
 
 		print_tokens(tokens);

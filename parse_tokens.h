@@ -67,9 +67,14 @@ char* get_redirect_error (char** tokens)
 	return get_token_after(tokens, "2>");
 }
 
-int has_ampersand (char** tokens)
+int clear_ampersand (char** tokens)
 {
-	return get_token_index(tokens, "&") != -1;
+	int index = get_token_index(tokens, "&");
+
+	if (index != -1)
+		tokens[index] = NULL;
+
+	return index != -1;
 }
 
 int set_args_end (char** tokens)
@@ -104,7 +109,7 @@ int main(int argc, char* argv[])
 		printf("in: '%s'\n", get_redirect_in(tokens));
 		printf("out: '%s'\n", get_redirect_out(tokens));
 		printf("error: %s\n", get_redirect_error(tokens));
-		printf("has ampersand: %d\n", has_ampersand(tokens) ? 1 : 0);
+		printf("cleared ampersand: %d\n", clear_ampersand(tokens) ? 1 : 0);
 		printf("args end: %d\n", set_args_end(tokens));
 
 		if (child_tokens != NULL) {
@@ -113,7 +118,7 @@ int main(int argc, char* argv[])
 			printf("child in: '%s'\n", get_redirect_in(child_tokens));
 			printf("child out: '%s'\n", get_redirect_out(child_tokens));
 			printf("child error: %s\n", get_redirect_error(child_tokens));
-			printf("has ampersand: %d\n", has_ampersand(child_tokens) ? 1 : 0);
+			printf("cleared ampersand: %d\n", clear_ampersand(child_tokens) ? 1 : 0);
 			printf("args end: %d\n", set_args_end(child_tokens));
 		}
 	}
