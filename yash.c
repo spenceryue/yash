@@ -24,8 +24,8 @@ void signal_handler (int signo)
 	{
 		case SIGINT:
 		case SIGTSTP:
-		printf("\n# ");
-		fflush(stdout);
+			printf("\n# ");
+			fflush(stdout);
 	}
 }
 
@@ -88,14 +88,14 @@ int main(int argc, char* argv[])
 	atexit(exit_handler);
 
 
-	if (signal(SIGINT, signal_handler) == SIG_ERR)	perror(flip_table " yash: signal");
-	if (signal(SIGTSTP, signal_handler) == SIG_ERR) perror(flip_table " yash: signal");
+	if (signal(SIGINT, signal_handler) == SIG_ERR)	perror(blank_face " yash: signal");
+	if (signal(SIGTSTP, signal_handler) == SIG_ERR) perror(blank_face " yash: signal");
 
-	if (signal (SIGCHLD, SIG_DFL) == SIG_ERR)		perror(flip_table " yash: signal");
+	if (signal (SIGCHLD, SIG_DFL) == SIG_ERR)		perror(blank_face " yash: signal");
 
-	if (signal (SIGQUIT, SIG_IGN) == SIG_ERR)		perror(flip_table " yash: signal");
-	if (signal (SIGTTIN, SIG_IGN) == SIG_ERR)		perror(flip_table " yash: signal");
-	if (signal (SIGTTOU, SIG_IGN) == SIG_ERR)		perror(flip_table " yash: signal");
+	if (signal (SIGQUIT, SIG_IGN) == SIG_ERR)		perror(blank_face " yash: signal");
+	if (signal (SIGTTIN, SIG_IGN) == SIG_ERR)		perror(blank_face " yash: signal");
+	if (signal (SIGTTOU, SIG_IGN) == SIG_ERR)		perror(blank_face " yash: signal");
 
 
 	Job* j = NULL;

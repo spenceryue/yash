@@ -68,7 +68,6 @@ Job* current_Job = NULL;
 struct termios shell_tmodes;
 pid_t shell_pid = -1;
 
-
 static void destroy_Process (Process* p)
 {
 	if (p == NULL)
@@ -336,7 +335,7 @@ int launch_Job (Job* j)
 			};
 		};
 		int in;
-	} Pipe = {{.next_in=-1, .out=-1}, .in=-1};
+	} Pipe = {{{-1, -1}}, -1};
 
 
 	int i = 0;
@@ -385,7 +384,7 @@ int launch_Job (Job* j)
 			setpgid(pid, pgid);
 			if (j->foreground)
 				if (tcsetpgrp (STDIN_FILENO, pgid) == -1)
-					perror(flip_table " yash: tcsetpgrp");
+					perror(blank_face " Warning: tcsetpgrp");
 
 			launch_Process(p, Pipe.in, Pipe.out, tmp_process_tokens[i]);
 		}
@@ -403,7 +402,7 @@ int launch_Job (Job* j)
 			setpgid(pid, pgid);
 			if (j->foreground)
 				if (tcsetpgrp (STDIN_FILENO, pgid) == -1)
-					perror(flip_table " yash: tcsetpgrp");
+					perror(blank_face " Warning: tcsetpgrp");
 		}
 
 		if (i > 0)

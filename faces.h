@@ -26,6 +26,8 @@
 #define check_mark		"✔"
 #define x_mark			"✖"
 #define porter_robinson	"【=◈︿◈=】"
+#define fart_right		"\\(´Д` )/==3"
+#define fart_left		"ε≡≡\\( ´Д`)/"
 
 #endif /* FACES_H */
 
@@ -45,6 +47,9 @@ int main(int argc, char* argv[])
 	cout << flip_table << endl << endl;
 	cout << blank_face << endl << endl;
 	cout << check_mark << endl << endl;
+	cout << porter_robinson << endl << endl;
+	cout << fart_left << endl << endl;
+	cout << fart_right << endl << endl;
 
   return 0;
 }
