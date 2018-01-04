@@ -18,3 +18,4 @@
 
 Yet Another SHell
 
+See the [requirements page](requirements.pdf) for details.
